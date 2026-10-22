@@ -1,13 +1,21 @@
 package com.waterreminder.app
 
 import android.app.TimePickerDialog
+import android.Manifest
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
+import android.provider.Settings
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -21,6 +29,7 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -51,7 +60,7 @@ private val Blue = Color(0xFF0088FF)
 private val Navy = Color(0xFF10234A)
 private val Muted = Color(0xFF637A99)
 private val Pale = Color(0xFFE5F3FF)
-private val Background = Color(0xFFF5FAFF)
+private val Background = Color(0xFFF8FBFE)
 private fun ml(value: Int) = String.format(Locale.getDefault(), "%,d ml", value)
 private fun clock(minutes: Int) = String.format(Locale.getDefault(), "%02d:%02d", minutes / 60, minutes % 60)
 
@@ -75,18 +84,43 @@ private fun WaterApp(store: WaterStore, lifecycle: Lifecycle) {
     var revision by remember { mutableIntStateOf(0) }
     var today by remember { mutableStateOf(LocalDate.now()) }
     var page by rememberSaveable { mutableIntStateOf(0) }
-    var editor by remember { mutableStateOf<String?>(null) }
-    var pendingDelete by remember { mutableStateOf<Drink?>(null) }
+    var editor by rememberSaveable { mutableStateOf<String?>(null) }
+    var pendingDeleteId by rememberSaveable { mutableStateOf<String?>(null) }
     var notice by remember { mutableStateOf<String?>(null) }
+    var explainPermission by rememberSaveable { mutableStateOf(false) }
+    val context = LocalContext.current
     val snackbar = remember { SnackbarHostState() }
+    val pageScrolls = listOf(rememberScrollState(), rememberScrollState(), rememberScrollState())
     val scope = rememberCoroutineScope()
-    fun refresh() { today = LocalDate.now(); store.refreshDay(today); revision++ }
+    fun refresh(restartInterval: Boolean = false) {
+        today = LocalDate.now()
+        store.refreshDay(today)
+        Reminders.reconcile(context, store, restartInterval)
+        revision++
+    }
+    val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
+        refresh(true)
+        if (!it) notice = "Notifications are blocked. You can allow them in Android notification settings."
+    }
+    fun enableReminders() {
+        store.update(store.preferences.copy(remindersEnabled = true))
+        if (Build.VERSION.SDK_INT >= 33 &&
+            context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            permission.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+        refresh(true)
+    }
+    val openNotificationSettings: () -> Unit = {
+        context.startActivity(Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS)
+            .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+            .putExtra(Settings.EXTRA_CHANNEL_ID, Reminders.CHANNEL))
+    }
     DisposableEffect(lifecycle) {
         val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_RESUME) refresh() }
         lifecycle.addObserver(observer)
         onDispose { lifecycle.removeObserver(observer) }
     }
-    LaunchedEffect(Unit) { refresh(); while (true) { delay(30_000); if (today != LocalDate.now()) refresh() } }
+    LaunchedEffect(Unit) { refresh(); while (true) { delay(30_000); if (today != LocalDate.now()) refresh() else revision++ } }
     // Reading revision invalidates the snapshot after repository mutations.
     @Suppress("UNUSED_VARIABLE") val currentRevision = revision
     val prefs = store.preferences
@@ -102,20 +136,34 @@ private fun WaterApp(store: WaterStore, lifecycle: Lifecycle) {
         }
     }
     Scaffold(containerColor = Background, snackbarHost = { SnackbarHost(snackbar) }, bottomBar = {
-        NavigationBar(containerColor = Color.White) {
-            listOf("Today" to Icons.Default.WaterDrop, "History" to Icons.Default.BarChart, "Settings" to Icons.Default.Settings)
-                .forEachIndexed { index, item ->
-                    NavigationBarItem(selected = page == index, onClick = { page = index },
-                        icon = { Icon(item.second, contentDescription = null) }, label = { Text(item.first) })
-                }
+        Surface(color = Color.White, shadowElevation = 2.dp) {
+            Row(Modifier.fillMaxWidth().navigationBarsPadding().height(56.dp)) {
+                listOf("Today" to Icons.Default.WaterDrop, "History" to Icons.Default.BarChart, "Settings" to Icons.Default.Settings)
+                    .forEachIndexed { index, item ->
+                        Column(Modifier.weight(1f).fillMaxHeight()
+                            .selectable(selected = page == index, role = androidx.compose.ui.semantics.Role.Tab, onClick = { page = index }),
+                            horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                            val tint = if (page == index) Blue else Muted
+                            Icon(item.second, contentDescription = null, tint = tint, modifier = Modifier.size(21.dp))
+                            Spacer(Modifier.height(2.dp))
+                            Text(item.first, color = tint, fontSize = 10.sp)
+                        }
+                    }
+            }
         }
     }) { padding ->
-        Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(20.dp)) {
+        Column(Modifier.fillMaxSize().padding(padding).verticalScroll(pageScrolls[page]).padding(horizontal = if (page == 0) 16.dp else 20.dp, vertical = if (page == 0) 8.dp else 20.dp),
+            verticalArrangement = Arrangement.spacedBy(if (page == 0) 6.dp else 20.dp)) {
+            if (store.recoveryNotice) Text(store.recoveryMessage, color = MaterialTheme.colorScheme.error)
             when (page) {
-                0 -> TodayScreen(today, prefs, drinks, add, { editor = "custom" }, { page = 2 }, { pendingDelete = it })
-                1 -> HistoryScreen(today, store, drinks) { pendingDelete = it }
-                else -> SettingsScreen(prefs, { editor = it }, { next -> store.update(next); refresh() }, { notice = it })
+                0 -> TodayScreen(today, prefs, drinks, add, { editor = "custom" }, { page = 2 },
+                    { pendingDeleteId = it.id }, Reminders.scheduledAt(context), Reminders.allowed(context))
+                1 -> HistoryScreen(today, store, drinks) { pendingDeleteId = it.id }
+                else -> SettingsScreen(prefs, { editor = it }, { next -> store.update(next); refresh(true) }, { notice = it },
+                    Reminders.allowed(context), { enabled ->
+                        if (enabled) explainPermission = true
+                        else { store.update(prefs.copy(remindersEnabled = false)); refresh() }
+                    }, openNotificationSettings)
             }
             Spacer(Modifier.height(8.dp))
         }
@@ -130,16 +178,21 @@ private fun WaterApp(store: WaterStore, lifecycle: Lifecycle) {
         "custom" -> NumberEditor("Add water", listOf(250), 10..5000, { editor = null }) { add(it.first()); editor = null }
         "interval" -> AlertDialog(onDismissRequest = { editor = null }, title = { Text("Reminder interval") },
             text = { Column { listOf(30, 60, 90, 120).forEach { value ->
-                TextButton(onClick = { store.update(prefs.copy(interval = value)); refresh(); editor = null }, modifier = Modifier.fillMaxWidth()) {
+                TextButton(onClick = { store.update(prefs.copy(interval = value)); refresh(true); editor = null }, modifier = Modifier.fillMaxWidth()) {
                     Text("Every $value minutes${if (value == prefs.interval) " ✓" else ""}")
                 }
             } } }, confirmButton = { TextButton(onClick = { editor = null }) { Text("Close") } })
     }
-    pendingDelete?.let { drink ->
-        AlertDialog(onDismissRequest = { pendingDelete = null }, title = { Text("Delete this drink?") },
+    if (explainPermission) AlertDialog(onDismissRequest = { explainPermission = false },
+        title = { Text("Enable water reminders?") },
+        text = { Text("Allow notifications to receive gentle reminders during your selected hours. They pause when you reach your daily goal.") },
+        confirmButton = { TextButton(onClick = { explainPermission = false; enableReminders() }) { Text("Continue") } },
+        dismissButton = { TextButton(onClick = { explainPermission = false }) { Text("Not now") } })
+    drinks.firstOrNull { it.id == pendingDeleteId }?.let { drink ->
+        AlertDialog(onDismissRequest = { pendingDeleteId = null }, title = { Text("Delete this drink?") },
             text = { Text("Remove ${ml(drink.amount)} from your history?") },
-            confirmButton = { TextButton(onClick = { store.delete(drink.id); refresh(); pendingDelete = null }) { Text("Delete") } },
-            dismissButton = { TextButton(onClick = { pendingDelete = null }) { Text("Keep") } })
+            confirmButton = { TextButton(onClick = { store.delete(drink.id); refresh(); pendingDeleteId = null }) { Text("Delete") } },
+            dismissButton = { TextButton(onClick = { pendingDeleteId = null }) { Text("Keep") } })
     }
     notice?.let { message -> AlertDialog(onDismissRequest = { notice = null }, title = { Text("Reminders") },
         text = { Text(message) }, confirmButton = { TextButton(onClick = { notice = null }) { Text("Got it") } }) }
@@ -161,69 +214,6 @@ private fun CardBlock(content: @Composable ColumnScope.() -> Unit) {
     Card(shape = RoundedCornerShape(22.dp), colors = CardDefaults.cardColors(containerColor = Color.White),
         modifier = Modifier.fillMaxWidth()) { Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp), content = content) }
 }
-
-@Composable
-private fun TodayScreen(today: LocalDate, prefs: Preferences, drinks: List<Drink>, add: (Int) -> Unit,
-    custom: () -> Unit, settings: () -> Unit, delete: (Drink) -> Unit) {
-    val total = Hydration.total(drinks, today)
-    val percentage = (total.toLong() * 100 / prefs.goal).toInt()
-    Heading("Water Reminder", today.format(DateTimeFormatter.ofPattern("EEEE, d MMMM"))) {
-        IconButton(onClick = settings) { Icon(Icons.Default.Settings, "Open settings", tint = Muted) }
-    }
-    Box(Modifier.fillMaxWidth().height(280.dp), contentAlignment = Alignment.Center) {
-        Canvas(Modifier.size(260.dp).semantics { contentDescription = "$percentage percent of daily goal" }) {
-            val stroke = 13.dp.toPx()
-            val inset = stroke / 2
-            val arcSize = Size(size.width - stroke, size.height - stroke)
-            drawArc(Pale, 0f, 360f, false, Offset(inset, inset), arcSize, style = Stroke(stroke))
-            drawArc(Blue, -90f, 360f * (total.toFloat() / prefs.goal).coerceIn(0f, 1f), false,
-                Offset(inset, inset), arcSize, style = Stroke(stroke, cap = StrokeCap.Round))
-            val wave = Path().apply {
-                moveTo(size.width * .23f, size.height * .76f)
-                cubicTo(size.width * .4f, size.height * .67f, size.width * .6f, size.height * .83f, size.width * .77f, size.height * .76f)
-                quadraticBezierTo(size.width * .5f, size.height * 1.04f, size.width * .23f, size.height * .76f)
-                close()
-            }
-            drawPath(wave, Color(0xFFB9E6FF))
-        }
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(ml(total), fontSize = 34.sp, fontWeight = FontWeight.Bold)
-            Text("of ${ml(prefs.goal)}", color = Muted)
-            Spacer(Modifier.height(12.dp))
-            Text("$percentage% of daily goal", color = Blue, modifier = Modifier.background(Pale, CircleShape).padding(horizontal = 14.dp, vertical = 6.dp))
-        }
-    }
-    Text(if (total >= prefs.goal) "Daily goal reached. Well done!" else "A little sip goes a long way", modifier = Modifier.alignCenter(), color = Navy)
-    Text("Add water", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        prefs.quick.forEach { amount ->
-            FilledTonalButton(onClick = { add(amount) }, shape = RoundedCornerShape(18.dp),
-                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 16.dp), modifier = Modifier.weight(1f)) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(Icons.Default.LocalDrink, contentDescription = null, modifier = Modifier.size(30.dp))
-                    Spacer(Modifier.height(8.dp)); Text("+${ml(amount)}")
-                }
-            }
-        }
-    }
-    OutlinedButton(onClick = custom, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Default.Add, null); Text("Custom amount") }
-    Card(onClick = settings, colors = CardDefaults.cardColors(containerColor = Pale), shape = RoundedCornerShape(20.dp)) {
-        Row(Modifier.fillMaxWidth().padding(18.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            Icon(Icons.Default.NotificationsNone, null, tint = Blue)
-            Column(Modifier.weight(1f)) {
-                Text("Reminders", fontWeight = FontWeight.Bold)
-                Text("Not active yet", color = Muted)
-                Text("Schedule preferences are ready to edit", style = MaterialTheme.typography.bodySmall, color = Muted)
-            }
-            Icon(Icons.Default.ChevronRight, null)
-        }
-    }
-    Text("Today’s activity", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-    DrinkList(drinks.filter { it.date() == today }, delete)
-}
-
-// Keep centering local to a full-width text instead of requiring a ColumnScope receiver.
-private fun Modifier.alignCenter() = fillMaxWidth().wrapContentWidth(Alignment.CenterHorizontally)
 
 @Composable
 private fun DrinkList(drinks: List<Drink>, delete: (Drink) -> Unit) {
@@ -270,7 +260,7 @@ private fun HistoryScreen(today: LocalDate, store: WaterStore, drinks: List<Drin
         Text("Goal reached $reached of ${dates.count { store.firstDay?.let { first -> !it.isBefore(first) } == true }} tracked days", color = Blue)
     }
     CardBlock {
-        Text("Last seven days", fontWeight = FontWeight.SemiBold)
+        Text(if (weekOffset == 0) "Last seven days" else "Selected seven days", fontWeight = FontWeight.SemiBold)
         Text("Tap a day to see its drinks. Line marks the daily goal.", color = Muted, style = MaterialTheme.typography.bodySmall)
         val maxValue = dates.maxOf { maxOf(Hydration.total(drinks, it), store.goalFor(it)) }.coerceAtLeast(1) * 1.15f
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -309,7 +299,8 @@ private fun SettingRow(icon: ImageVector, title: String, value: String, onClick:
 }
 
 @Composable
-private fun SettingsScreen(prefs: Preferences, edit: (String) -> Unit, update: (Preferences) -> Unit, notice: (String) -> Unit) {
+private fun SettingsScreen(prefs: Preferences, edit: (String) -> Unit, update: (Preferences) -> Unit,
+    notice: (String) -> Unit, notificationsAllowed: Boolean, toggle: (Boolean) -> Unit, openNotifications: () -> Unit) {
     val context = LocalContext.current
     fun pickTime(start: Boolean) {
         val current = if (start) prefs.start else prefs.end
@@ -328,9 +319,14 @@ private fun SettingsScreen(prefs: Preferences, edit: (String) -> Unit, update: (
     }
     Text("REMINDERS", color = Muted, style = MaterialTheme.typography.labelLarge)
     CardBlock {
-        SettingRow(Icons.Default.NotificationsNone, "Drink reminders", "Available in Stage 3") {
-            notice("Your schedule preferences are saved. Notification permission and reminder delivery will be added in Stage 3.")
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Default.NotificationsNone, null, tint = Blue, modifier = Modifier.padding(end = 12.dp))
+            Text("Drink reminders", modifier = Modifier.weight(1f), fontWeight = FontWeight.Medium)
+            Switch(checked = prefs.remindersEnabled, onCheckedChange = toggle,
+                modifier = Modifier.semantics { contentDescription = "Drink reminders" })
         }
+        if (prefs.remindersEnabled && !notificationsAllowed)
+            SettingRow(Icons.Default.NotificationsOff, "Notifications blocked", "Tap to allow in Android settings", openNotifications)
         HorizontalDivider(color = Pale)
         SettingRow(Icons.Default.Schedule, "Remind me every", "${prefs.interval} minutes") { edit("interval") }
         HorizontalDivider(color = Pale)
@@ -338,7 +334,7 @@ private fun SettingsScreen(prefs: Preferences, edit: (String) -> Unit, update: (
         HorizontalDivider(color = Pale)
         SettingRow(Icons.Default.Bedtime, "End time", clock(prefs.end)) { pickTime(false) }
     }
-    Text("Reminders will pause outside these hours.", color = Muted)
+    Text("Reminders pause outside these hours and after your daily goal. Delivery times are approximate and may be delayed by battery saving.", color = Muted)
     CardBlock {
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) { Icon(Icons.Default.Lock, null, tint = Muted); Text("Your data stays on your phone", color = Muted) }
         Text("Amounts are measured in milliliters. The starting goal is editable and is not a personalized health recommendation.", color = Muted, style = MaterialTheme.typography.bodySmall)
@@ -347,19 +343,21 @@ private fun SettingsScreen(prefs: Preferences, edit: (String) -> Unit, update: (
 
 @Composable
 private fun NumberEditor(title: String, initial: List<Int>, range: IntRange, dismiss: () -> Unit, save: (List<Int>) -> Unit) {
-    val values = remember { initial.map { mutableStateOf(it.toString()) } }
-    var submitted by remember { mutableStateOf(false) }
-    val valid = values.all { state -> state.value.toIntOrNull()?.let { it in range } == true }
+    var values by rememberSaveable(title, stateSaver = listSaver<List<String>, String>(
+        save = { it }, restore = { it.toList() }
+    )) { mutableStateOf(initial.map { it.toString() }) }
+    var submitted by rememberSaveable(title) { mutableStateOf(false) }
+    val valid = values.all { state -> state.toIntOrNull()?.let { it in range } == true }
     AlertDialog(onDismissRequest = dismiss, title = { Text(title) }, text = {
-        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             values.forEachIndexed { index, state ->
-                val invalid = state.value.toIntOrNull()?.let { it in range } != true
-                OutlinedTextField(value = state.value, onValueChange = { state.value = it }, singleLine = true,
+                val invalid = state.toIntOrNull()?.let { it in range } != true
+                OutlinedTextField(value = state, onValueChange = { text -> values = values.mapIndexed { i, old -> if (i == index) text else old } }, singleLine = true,
                     label = { Text(if (values.size == 1) "Amount (ml)" else "Button ${index + 1} (ml)") },
                     isError = invalid && submitted, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     supportingText = { if (invalid && submitted) Text("Enter ${range.first}–${range.last} ml") })
             }
         }
-    }, confirmButton = { TextButton(onClick = { submitted = true; if (valid) save(values.map { it.value.toInt() }) }) { Text("Save") } },
+    }, confirmButton = { TextButton(onClick = { submitted = true; if (valid) save(values.map { it.toInt() }) }) { Text("Save") } },
         dismissButton = { TextButton(onClick = dismiss) { Text("Cancel") } })
 }

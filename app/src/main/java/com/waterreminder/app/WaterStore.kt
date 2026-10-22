@@ -1,63 +1,64 @@
 package com.waterreminder.app
 
 import android.content.Context
-import org.json.JSONArray
-import org.json.JSONObject
 import java.time.LocalDate
 
 /** One private snapshot keeps settings, goal history, and entries consistent. */
 class WaterStore(context: Context) {
     private val storage = context.getSharedPreferences("hydration", Context.MODE_PRIVATE)
-    private val data = JSONObject(storage.getString("snapshot", "{}") ?: "{}")
-    var preferences = Preferences(
-        goal = data.optInt("goal", 2000),
-        quick = data.optJSONArray("quick")?.let { a -> (0 until a.length()).map { a.getInt(it) } } ?: listOf(150, 250, 500),
-        interval = data.optInt("interval", 60), start = data.optInt("start", 480), end = data.optInt("end", 1320)
-    )
-        private set
-    var drinks = data.optJSONArray("drinks")?.let { a ->
-        (0 until a.length()).map { i -> a.getJSONObject(i).let { Drink(it.getString("id"), it.getInt("amount"), it.getLong("time")) } }
-    } ?: emptyList()
-        private set
-    private val goals = data.optJSONObject("goals") ?: JSONObject()
-    var firstDay: LocalDate? = data.optString("firstDay").takeIf { it.isNotEmpty() }?.let(LocalDate::parse)
-        private set
+    private val raw = storage.getString("snapshot", "{}") ?: "{}"
+    private var snapshot = WaterSnapshot.decode(raw)
+    val preferences get() = snapshot.preferences
+    val drinks get() = snapshot.drinks
+    val firstDay get() = snapshot.firstDay()
+    val recoveryNotice: Boolean
+    private var canSave = true
+    val recoveryMessage get() = if (canSave)
+        "Some saved data could not be read. Valid entries were recovered and the original was kept on this phone."
+        else "Saved data could not be repaired. Changes cannot be saved right now; the original data has been kept."
 
-    fun goalFor(day: LocalDate): Int {
-        // The most recent earlier goal also covers days without a launch or drink.
-        val key = goals.keys().asSequence().filter { it <= day.toString() }.maxOrNull()
-        return key?.let { goals.getInt(it) } ?: 2000
+    init {
+        if (snapshot.recovered) {
+            // Preserve the first damaged original before writing repaired data.
+            val edit = storage.edit().putBoolean("recovery_notice", true)
+            if (!storage.contains("recovery_snapshot")) edit.putString("recovery_snapshot", raw)
+            canSave = edit.commit()
+        }
+        recoveryNotice = snapshot.recovered || storage.getBoolean("recovery_notice", false)
+        // Persist migration immediately, even when today's goal already exists.
+        save()
     }
 
+    fun goalFor(day: LocalDate): Int = snapshot.goals.keys.filter { it <= day }.maxOrNull()
+        ?.let { snapshot.goals.getValue(it) } ?: 2000
+
     fun refreshDay(day: LocalDate = LocalDate.now()) {
-        if (!goals.has(day.toString())) { goals.put(day.toString(), preferences.goal); save() }
+        if (day !in snapshot.goals) {
+            snapshot = snapshot.copy(goals = snapshot.goals + (day to preferences.goal))
+            save()
+        }
     }
 
     fun add(amount: Int): Drink {
         require(Hydration.validAmount(amount))
         refreshDay()
         val drink = Drink(amount = amount)
-        drinks = drinks + drink
-        if (firstDay == null) firstDay = drink.date()
+        snapshot = snapshot.copy(drinks = drinks + drink,
+            trackingStartedAt = snapshot.trackingStartedAt?.coerceAtMost(drink.timestamp) ?: drink.timestamp)
         save()
         return drink
     }
 
-    fun delete(id: String) { drinks = drinks.filterNot { it.id == id }; save() }
+    fun delete(id: String) { snapshot = snapshot.copy(drinks = drinks.filterNot { it.id == id }); save() }
 
     fun update(next: Preferences) {
         require(Hydration.validGoal(next.goal) && next.quick.size == 3 && next.quick.all { Hydration.validAmount(it) })
         require(next.interval in listOf(30, 60, 90, 120) && Hydration.validWindow(next.start, next.end))
-        preferences = next
-        goals.put(LocalDate.now().toString(), next.goal)
+        snapshot = snapshot.copy(preferences = next, goals = snapshot.goals + (LocalDate.now() to next.goal))
         save()
     }
 
     private fun save() {
-        val snapshot = JSONObject().put("goal", preferences.goal).put("quick", JSONArray(preferences.quick))
-            .put("interval", preferences.interval).put("start", preferences.start).put("end", preferences.end)
-            .put("goals", goals).put("firstDay", firstDay?.toString() ?: "")
-            .put("drinks", JSONArray().apply { drinks.forEach { put(JSONObject().put("id", it.id).put("amount", it.amount).put("time", it.timestamp)) } })
-        storage.edit().putString("snapshot", snapshot.toString()).apply()
+        if (canSave) storage.edit().putString("snapshot", snapshot.encode()).apply()
     }
 }

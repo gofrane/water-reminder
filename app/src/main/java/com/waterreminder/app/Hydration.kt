@@ -14,7 +14,8 @@ data class Preferences(
     val quick: List<Int> = listOf(150, 250, 500),
     val interval: Int = 60,
     val start: Int = 8 * 60,
-    val end: Int = 22 * 60
+    val end: Int = 22 * 60,
+    val remindersEnabled: Boolean = false
 )
 
 object Hydration {

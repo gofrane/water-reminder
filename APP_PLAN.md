@@ -1,6 +1,6 @@
 # Water Reminder — Stage 1 design plan
 
-Status: proposed first-version design, ready for review before implementation.
+Status: core first-version scope implemented; reliability fixes and release acceptance checks are tracked in `docs/testing/V1_REVIEW.md`.
 
 ## Purpose
 
@@ -91,4 +91,4 @@ Open Today with zero progress and the editable default goal. No onboarding carou
 3. Implement notification permissions and reminder scheduling.
 4. Test on an emulator/device, verify accessibility and scheduling behavior, then produce a debug APK for installation.
 
-Build prerequisite: Android Studio with an Android SDK and compatible JDK. The initial workspace check found Java 8 but no usable Android SDK or Gradle installation; APK compilation has not been verified.
+Build setup verified: Android SDK Platform 35 and JDK 17. Debug APK compilation, JVM tests and lint are available; see README.md for current validation and remaining device acceptance checks.

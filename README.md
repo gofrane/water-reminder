@@ -1,6 +1,6 @@
 # Water Reminder
 
-Native Android app built with Kotlin and Jetpack Compose. Stage 2 implementation based on [the design plan](APP_PLAN.md).
+Native Android app built with Kotlin and Jetpack Compose. Tracking and reminders based on [the design plan](APP_PLAN.md).
 
 ## Implemented
 
@@ -11,7 +11,7 @@ Native Android app built with Kotlin and Jetpack Compose. Stage 2 implementation
 - Refresh after returning to the app and at local midnight while open.
 - Scrollable layouts and labeled icon actions.
 
-Reminder preferences can be edited, but reminders are explicitly marked inactive. Notification permission, scheduling, and delivery are Stage 3 work.
+Reminders include an enable switch, contextual notification permission request, blocked-notification settings link, and next reminder status. Inexact Android alarms respect the selected hours, restart the interval after drinking, pause at the daily goal, and restore the schedule after reboot, app updates, and clock/timezone changes. Delivery can be delayed by Android battery management. Force-stopping the app cancels alarms until it is opened again.
 
 ## Open and run
 
@@ -32,7 +32,13 @@ Build versions: Android Gradle Plugin 8.9.2, Gradle 8.11.1, Kotlin/Compose compi
 
 ## Verification status
 
-Verified on 20 October 2026 with JDK 17.0.20.1 and Android SDK Platform 35: `testDebugUnitTest assembleDebug` succeeded. All three unit tests passed, covering local midnight boundaries, averages, amount validation, and reminder window validation. Debug APK: `app/build/outputs/apk/debug/app-debug.apk`. Emulator rendering and device behavior have **not** been verified. Non-blocking warnings concern SDK metadata compatibility, a deprecated Compose path method, and an unstripped bundled native library.
+First-version review fixes (21 October 2026): reminder windows now share DST-aware boundaries; tracking start is stored as an instant for timezone-correct statistics; editor drafts survive activity recreation; tabs retain independent scroll positions; explicit backup/transfer exclusions are configured. Versioned snapshot loading validates settings and records, preserves a damaged original before repair, and shows a recovery notice. See [review and fix details](docs/testing/V1_REVIEW.md), including the date-only legacy migration limitation and outstanding device checks.
+
+Latest validation: all 21 unit tests passed after the final changes; debug APK build and lint succeeded with zero errors and eight informational warnings (dependency updates and KTX suggestions). The updated APK has not been installed over the running manual-test emulator. The following Stage 3 results document the earlier baseline.
+
+Verified on 20 October 2026 with JDK 17.0.20.1 and Android SDK Platform 35. Nine unit tests cover local midnight boundaries, averages, amount validation, reminder intervals, quiet hours, goal completion, overdue reminders, and daylight-saving changes. Debug APK: `app/build/outputs/apk/debug/app-debug.apk`. Live Android API 37 emulator checks verified rendering, drink tracking, permission denial, notification delivery, goal-based pausing, alarm cancellation, and restoration after reboot. See the [emulator report and notification screenshot](docs/testing/EMULATOR_TEST_REPORT.md) for test methods and environment limitations.
+
+Final Stage 3 validation: `testDebugUnitTest lintDebug assembleDebug --offline --no-daemon` succeeded. All nine tests passed, and lint reported no errors. The remaining lint warnings are informational (dependency updates, backup policy suggestions, and KTX edit suggestions).
 
 Device acceptance checks for the next verification stage:
 
@@ -41,6 +47,6 @@ Device acceptance checks for the next verification stage:
 - Navigate weekly history and select days, including empty days.
 - Check font scaling, screen sizes, and TalkBack.
 - Cross midnight and change timezone; verify totals refresh.
-- Once Stage 3 lands, verify permission denial, reminder delivery, reboot restoration, and goal-based pausing.
+- Verify permission denial, reminder delivery, reboot restoration, and goal-based pausing.
 
 Data is local and Android backup is disabled. Uninstalling the app removes its saved history; export and sync are outside the first version.
