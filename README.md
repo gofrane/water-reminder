@@ -1,52 +1,117 @@
 # Water Reminder
 
-Native Android app built with Kotlin and Jetpack Compose. Tracking and reminders based on [the design plan](APP_PLAN.md).
+A native Android app for tracking daily water intake and scheduling reminders around your day. Built with Kotlin and Jetpack Compose, with all tracking data stored on your device.
 
-## Implemented
+**Current version:** 0.2.0 · **Minimum Android version:** Android 8.0 (API 26)
 
-- Today: circular progress, configurable quick-add buttons, custom drink amounts, recent entries, snackbar undo, and confirmed deletion.
-- History: seven-day chart, selectable days, previous-week navigation, daily totals, average, and goal completion count.
-- Settings: validated daily goal and quick-add sizes, interval selection, and Android time pickers.
-- Private local persistence for entries, settings, first tracking day, and daily goal history. No network permission or account.
-- Refresh after returning to the app and at local midnight while open.
-- Scrollable layouts and labeled icon actions.
+## Preview
 
-Reminders include an enable switch, contextual notification permission request, blocked-notification settings link, and next reminder status. Inexact Android alarms respect the selected hours, restart the interval after drinking, pause at the daily goal, and restore the schedule after reboot, app updates, and clock/timezone changes. Delivery can be delayed by Android battery management. Force-stopping the app cancels alarms until it is opened again.
+<img src="docs/testing/reference-today.png" alt="Water Reminder Today screen with daily progress, quick-add water buttons, reminder status, and today's activity" width="320">
 
-## Open and run
+The compact Today screen keeps the quick-add buttons visible when you open the app. This screenshot shows the app running on an Android API 35 emulator.
 
-1. Install Android Studio and Android SDK Platform 35. Use JDK 17 for Gradle.
-2. Open this project folder in Android Studio and allow Gradle sync.
-3. Select an emulator or connected device running Android 8.0 (API 26) or later.
-4. Run the `app` configuration.
+## Features
 
-Windows terminal commands, after setting JAVA_HOME to JDK 17 and ANDROID_HOME to the SDK:
+- **Daily progress:** view your total intake, daily goal, and completion percentage in a circular water graphic.
+- **Quick logging:** add water with one tap, customize the three quick-add amounts, or enter a custom amount.
+- **Entry management:** undo a new entry or review and delete a drink with confirmation.
+- **Hydration history:** browse weekly charts, select individual days, and review daily totals and goal completion.
+- **Flexible reminders:** choose an interval and active hours, with reminder status displayed on Today.
+- **Local storage:** entries and preferences stay on your device. No account or internet connection is required to use the app.
+
+## Getting started
+
+1. Open **Settings** to choose your daily goal and quick-add amounts.
+2. Enable reminders, select your interval and active hours, and allow notifications when prompted.
+3. On **Today**, tap a glass to log water. Scroll below today's activity to enter a custom amount.
+4. Open **History** to review previous days and weekly progress.
+
+The starting values are a 2,000 ml goal, quick-add amounts of 150 / 250 / 500 ml, and a 60-minute reminder interval between 08:00 and 22:00. All are editable; reminders start disabled.
+
+### How reminders work
+
+Logging a drink restarts the reminder interval. Reminders run during your selected active hours and pause for the day when you reach your goal. The schedule is restored after a reboot or app update and adjusted when the device time or timezone changes.
+
+Android may delay notifications to conserve battery, so delivery is not guaranteed at an exact time. Force-stopping the app cancels its alarms until you open it again. Active hours must start and end within the same day; overnight schedules are not supported yet.
+
+## Build and run
+
+### Requirements
+
+- Android Studio with Android SDK Platform 35 installed
+- JDK 17 for Gradle
+- An emulator or Android device running API 26 or later
+
+### Android Studio
+
+1. Clone the repository:
+
+   ```bash
+   git clone https://github.com/gofrane/water-reminder.git
+   ```
+
+2. Open the `water-reminder` folder in Android Studio.
+3. Select JDK 17 as the Gradle JDK and let Gradle sync finish.
+4. Choose an emulator or connected device, then run the **app** configuration.
+
+### Command line
+
+Run commands from the project root. Set `JAVA_HOME` to your JDK 17 installation and configure the Android SDK through `ANDROID_HOME` or an untracked `local.properties` file containing `sdk.dir`.
+
+**Windows PowerShell**
 
 ```powershell
-.\gradlew.bat testDebugUnitTest assembleDebug
+.\gradlew.bat assembleDebug
 ```
 
-The debug APK is generated at `app/build/outputs/apk/debug/app-debug.apk` after a successful build.
+**macOS / Linux**
 
-Build versions: Android Gradle Plugin 8.9.2, Gradle 8.11.1, Kotlin/Compose compiler 2.0.21, Compose BOM 2024.12.01, compile/target SDK 35. These are pinned for reproducibility rather than presented as the newest releases.
+```bash
+./gradlew assembleDebug
+```
 
-## Verification status
+The first build needs internet access to download dependencies. The Gradle wrapper is included, so a separate Gradle installation is not required.
 
-First-version review fixes (21 October 2026): reminder windows now share DST-aware boundaries; tracking start is stored as an instant for timezone-correct statistics; editor drafts survive activity recreation; tabs retain independent scroll positions; explicit backup/transfer exclusions are configured. Versioned snapshot loading validates settings and records, preserves a damaged original before repair, and shows a recovery notice. See [review and fix details](docs/testing/V1_REVIEW.md), including the date-only legacy migration limitation and outstanding device checks.
+The debug APK is generated at `app/build/outputs/apk/debug/app-debug.apk`. With ADB available, install it on a connected device or running emulator:
 
-Latest validation: all 21 unit tests passed after the final changes; debug APK build and lint succeeded with zero errors and eight informational warnings (dependency updates and KTX suggestions). The updated APK has not been installed over the running manual-test emulator. The following Stage 3 results document the earlier baseline.
+```bash
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+```
 
-Verified on 20 October 2026 with JDK 17.0.20.1 and Android SDK Platform 35. Nine unit tests cover local midnight boundaries, averages, amount validation, reminder intervals, quiet hours, goal completion, overdue reminders, and daylight-saving changes. Debug APK: `app/build/outputs/apk/debug/app-debug.apk`. Live Android API 37 emulator checks verified rendering, drink tracking, permission denial, notification delivery, goal-based pausing, alarm cancellation, and restoration after reboot. See the [emulator report and notification screenshot](docs/testing/EMULATOR_TEST_REPORT.md) for test methods and environment limitations.
+## Development and validation
 
-Final Stage 3 validation: `testDebugUnitTest lintDebug assembleDebug --offline --no-daemon` succeeded. All nine tests passed, and lint reported no errors. The remaining lint warnings are informational (dependency updates, backup policy suggestions, and KTX edit suggestions).
+The project uses Kotlin 2.0.21, Jetpack Compose with Material 3, Android Gradle Plugin 8.9.2, and Gradle 8.11.1. Compile and target SDK are both 35. Build versions are pinned in the Gradle files.
 
-Device acceptance checks for the next verification stage:
+Run the unit tests, Android lint, and debug build:
 
-- Log quick and custom drinks; undo and delete; restart and confirm persistence.
-- Change goal and quick amounts; reject invalid inputs; verify historical goal snapshots.
-- Navigate weekly history and select days, including empty days.
-- Check font scaling, screen sizes, and TalkBack.
-- Cross midnight and change timezone; verify totals refresh.
-- Verify permission denial, reminder delivery, reboot restoration, and goal-based pausing.
+```powershell
+.\gradlew.bat testDebugUnitTest lintDebug assembleDebug
+```
 
-Data is local and Android backup is disabled. Uninstalling the app removes its saved history; export and sync are outside the first version.
+On macOS or Linux, use `./gradlew` in place of `.\gradlew.bat`.
+
+Recorded validation:
+
+- **Reliability changes, 21 October 2026:** all 21 unit tests passed, covering hydration calculations, reminder scheduling, and saved-data validation and recovery.
+- **Today screen update, 22 October 2026:** debug build and lint passed with zero errors and six existing warnings. The updated app was installed and visually checked on an API 35 emulator, including navigation and preserved history.
+- **Earlier reminder checks:** notification delivery, permission handling, goal-based pausing, alarm cancellation, and reboot restoration were exercised on an API 37 emulator.
+
+Physical-device coverage, larger font sizes, TalkBack, and extended battery-management testing remain part of release acceptance. See the [emulator test report](docs/testing/EMULATOR_TEST_REPORT.md) and [first-version review](docs/testing/V1_REVIEW.md) for evidence and limitations.
+
+## Privacy and storage
+
+Water entries and preferences are stored in the app's private storage. The app does not request internet access. Notification permission enables reminders; boot-completed permission allows the schedule to resume after a restart.
+
+Android backup and device-transfer exclusions are configured for app data. Uninstalling the app removes its saved history. Export, accounts, and cloud sync are not implemented.
+
+## Project guide
+
+| Location | Purpose |
+| --- | --- |
+| `app/src/main/java/com/waterreminder/app/` | Compose screens, hydration logic, storage, and reminder scheduling |
+| `app/src/main/res/` | Icons, themes, and backup rules |
+| `app/src/test/` | JVM unit tests |
+| `docs/testing/` | Review notes, emulator reports, and screenshots |
+| [APP_PLAN.md](APP_PLAN.md) | Feature scope and original design plan |
+
+The first version focuses on daily tracking and reminders. Dark mode, additional languages and units, widgets, monthly charts, export, and cloud sync are future possibilities outside the current scope.
